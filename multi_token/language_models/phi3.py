@@ -10,7 +10,6 @@ from transformers import (
     PhiConfig,
     PhiModel,
     PhiForCausalLM,
-    PreTrainedModel,
 )
 
 from transformers.modeling_outputs import CausalLMOutputWithPast
@@ -20,8 +19,10 @@ from multi_token.language_models.base_model import (
     LMMMetaForCausalLM,
 )
 
+
 class Phi3LMMConfig(PhiConfig):
     model_type = "phi3-lmm"
+
 
 class Phi3LMMModel(LMMMetaModel, PhiModel):
     config_class = Phi3LMMConfig
@@ -29,12 +30,14 @@ class Phi3LMMModel(LMMMetaModel, PhiModel):
     def __init__(self, config: Phi3LMMConfig):
         super(Phi3LMMModel, self).__init__(config)
 
-class Phi3LMMForCausalLM(LMMMetaForCausalLM, PreTrainedModel):
+
+class Phi3LMMForCausalLM(PhiForCausalLM, LMMMetaForCausalLM):
     config_class = Phi3LMMConfig
 
     def __init__(self, config):
-        super().__init__(config)
+        super(PhiForCausalLM, self).__init__(config)
         self.model = Phi3LMMModel(config)
+
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.modalities = None
@@ -42,20 +45,8 @@ class Phi3LMMForCausalLM(LMMMetaForCausalLM, PreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
-        config = kwargs.pop("config", None)
-        if not isinstance(config, Phi3LMMConfig):
-            config = Phi3LMMConfig.from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
-        
-        # Load the model
-        model = super().from_pretrained(pretrained_model_name_or_path, *model_args, config=config, **kwargs)
-        
-        # Initialize the lm_head if it's not loaded from the pretrained model
-        if model.lm_head.weight.shape[0] != model.vocab_size:
-            model.lm_head = nn.Linear(model.config.hidden_size, model.vocab_size, bias=False)
-        
-        return model
+    def get_model(self) -> "Phi3LMMModel":
+        return self.model
 
     def forward(
         self,
@@ -99,14 +90,18 @@ class Phi3LMMForCausalLM(LMMMetaForCausalLM, PreTrainedModel):
 
         hidden_states = outputs[0]
         logits = self.lm_head(hidden_states)
+        logits = logits.float()
 
         loss = None
         if labels is not None:
+            # Shift so that tokens < n predict n
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
+            # Flatten the tokens
             loss_fct = CrossEntropyLoss()
             shift_logits = shift_logits.view(-1, self.config.vocab_size)
             shift_labels = shift_labels.view(-1)
+            # Enable model parallelism
             shift_labels = shift_labels.to(shift_logits.device)
             loss = loss_fct(shift_logits, shift_labels)
 
@@ -147,6 +142,7 @@ class Phi3LMMForCausalLM(LMMMetaForCausalLM, PreTrainedModel):
         }
 
         return model_inputs
+
 
 AutoConfig.register("phi3-lmm", Phi3LMMConfig)
 AutoModelForCausalLM.register(Phi3LMMConfig, Phi3LMMForCausalLM)
