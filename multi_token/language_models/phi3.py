@@ -27,24 +27,21 @@ class Phi3LMMModel(LMMMetaModel, PhiModel):
 
     def __init__(self, config: Phi3LMMConfig):
         super(Phi3LMMModel, self).__init__(config)
-        self.phi3_model = AutoModelForCausalLM.from_pretrained(config.name_or_path, trust_remote_code=True).model
 
-    def forward(self, *args, **kwargs):
-        return self.phi3_model(*args, **kwargs)
-
-class Phi3LMMForCausalLM(PhiForCausalLM, LMMMetaForCausalLM):
+class Phi3LMMForCausalLM(LMMMetaForCausalLM):
     config_class = Phi3LMMConfig
 
     def __init__(self, config):
-        super(PhiForCausalLM, self).__init__(config)
+        super().__init__(config)
         self.model = Phi3LMMModel(config)
-        self.lm_head = self.model.phi3_model.lm_head
+        self.vocab_size = config.vocab_size
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.modalities = None
 
         # Initialize weights and apply final processing
         self.post_init()
 
-    def get_model(self) -> "Phi3LMMForCausalLM":
+    def get_model(self):
         return self.model
 
     def forward(
@@ -89,7 +86,6 @@ class Phi3LMMForCausalLM(PhiForCausalLM, LMMMetaForCausalLM):
 
         hidden_states = outputs[0]
         logits = self.lm_head(hidden_states)
-        logits = logits.float()
 
         loss = None
         if labels is not None:
