@@ -48,6 +48,23 @@ class Phi3LMMForCausalLM(PhiForCausalLM, LMMMetaForCausalLM):
     def get_model(self) -> "Phi3LMMModel":
         return self.model
 
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+        config = kwargs.pop("config", None)
+        if not isinstance(config, Phi3LMMConfig):
+            config = Phi3LMMConfig.from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
+        
+        # Load the model
+        model = super().from_pretrained(pretrained_model_name_or_path, *model_args, config=config, **kwargs)
+        
+        # Ensure all necessary weights are initialized
+        model._init_weights(model.lm_head)
+        
+        print("Note: This model is initialized from a pre-trained Phi3 model. "
+              "You should fine-tune it on your specific task for best performance.")
+        
+        return model
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
