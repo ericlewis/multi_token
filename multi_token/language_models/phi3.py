@@ -1,35 +1,21 @@
 from typing import List, Optional, Tuple, Union
-
 import torch
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss
-
-from transformers import (
-    AutoConfig,
-    AutoModelForCausalLM,
-    PhiConfig,
-    PhiModel,
-    PhiForCausalLM,
-)
-
+from transformers import PhiConfig, PhiModel, PhiForCausalLM, AutoConfig, AutoModelForCausalLM
 from transformers.modeling_outputs import CausalLMOutputWithPast
-
-from multi_token.language_models.base_model import (
-    LMMMetaModel,
-    LMMMetaForCausalLM,
-)
-
+from multi_token.language_models.base_model import LMMMetaModel, LMMMetaForCausalLM
 
 class Phi3LMMConfig(PhiConfig):
     model_type = "phi3-lmm"
-
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.modality_tokens = kwargs.pop("modality_tokens", [])
 
 class Phi3LMMModel(LMMMetaModel, PhiModel):
     config_class = Phi3LMMConfig
-
     def __init__(self, config: Phi3LMMConfig):
         super(Phi3LMMModel, self).__init__(config)
-
 
 class Phi3LMMForCausalLM(PhiForCausalLM, LMMMetaForCausalLM):
     config_class = Phi3LMMConfig
@@ -37,12 +23,9 @@ class Phi3LMMForCausalLM(PhiForCausalLM, LMMMetaForCausalLM):
     def __init__(self, config):
         super(PhiForCausalLM, self).__init__(config)
         self.model = Phi3LMMModel(config)
-
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.modalities = None
-
-        # Initialize weights and apply final processing
         self.post_init()
 
     def get_model(self) -> "Phi3LMMModel":
@@ -54,16 +37,27 @@ class Phi3LMMForCausalLM(PhiForCausalLM, LMMMetaForCausalLM):
         if not isinstance(config, Phi3LMMConfig):
             config = Phi3LMMConfig.from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
         
-        # Load the model
         model = super().from_pretrained(pretrained_model_name_or_path, *model_args, config=config, **kwargs)
-        
-        # Ensure all necessary weights are initialized
         model._init_weights(model.lm_head)
         
         print("Note: This model is initialized from a pre-trained Phi3 model. "
               "You should fine-tune it on your specific task for best performance.")
         
         return model
+
+    def prepare_inputs_labels_for_multimodal(
+        self, input_ids, attention_mask, past_key_values, labels, **kwargs
+    ):
+        modality_inputs = kwargs.get("modality_inputs", {})
+        if not modality_inputs:
+            return input_ids, attention_mask, past_key_values, None, labels
+
+        # Process modality inputs here
+        # This is a placeholder implementation. You need to implement this based on your specific multimodal setup
+        processed_inputs = input_ids  # Placeholder
+        processed_attention_mask = attention_mask  # Placeholder
+
+        return processed_inputs, processed_attention_mask, past_key_values, None, labels
 
     def forward(
         self,
@@ -107,20 +101,13 @@ class Phi3LMMForCausalLM(PhiForCausalLM, LMMMetaForCausalLM):
 
         hidden_states = outputs[0]
         logits = self.lm_head(hidden_states)
-        logits = logits.float()
 
         loss = None
         if labels is not None:
-            # Shift so that tokens < n predict n
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
-            # Flatten the tokens
             loss_fct = CrossEntropyLoss()
-            shift_logits = shift_logits.view(-1, self.config.vocab_size)
-            shift_labels = shift_labels.view(-1)
-            # Enable model parallelism
-            shift_labels = shift_labels.to(shift_logits.device)
-            loss = loss_fct(shift_logits, shift_labels)
+            loss = loss_fct(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
 
         if not return_dict:
             output = (logits,) + outputs[1:]
@@ -146,20 +133,15 @@ class Phi3LMMForCausalLM(PhiForCausalLM, LMMMetaForCausalLM):
         if past_key_values:
             input_ids = input_ids[:, -1:]
 
-        if inputs_embeds is not None:
-            raise ValueError("inputs_embeds not supported")
-
         model_inputs = {
             "input_ids": input_ids,
-            "position_ids": None,
             "past_key_values": past_key_values,
             "use_cache": kwargs.get("use_cache"),
             "attention_mask": attention_mask,
-            **(modality_inputs or {}),
+            "modality_inputs": modality_inputs,
         }
 
         return model_inputs
-
 
 AutoConfig.register("phi3-lmm", Phi3LMMConfig)
 AutoModelForCausalLM.register(Phi3LMMConfig, Phi3LMMForCausalLM)
