@@ -1,18 +1,16 @@
 from typing import Type, List, Optional
 import logging
-
 from transformers import AutoTokenizer, AutoConfig, BitsAndBytesConfig
 from huggingface_hub import hf_hub_download
 from peft import PeftModel
 import torch
 import os
-
 from multi_token.model_utils import fix_tokenizer
 from multi_token.modalities.base_modality import Modality
 from multi_token.language_models.mistral import MistralForCausalLM
+from multi_token.language_models.qwen2 import Qwen2LMMForCausalLM  # Add this import
 from multi_token.language_models import LANGUAGE_MODEL_NAME_TO_CLASS
 from multi_token.modalities import MODALITY_BUILDERS
-
 
 def load_trained_lora_model(
     model_name_or_path: str,
@@ -23,7 +21,6 @@ def load_trained_lora_model(
     device_map: str = "auto",
 ):
     load_kwargs = {"device_map": device_map}
-
     if load_bits == 8:
         load_kwargs["load_in_8bit"] = True
     elif load_bits == 4:
@@ -39,7 +36,8 @@ def load_trained_lora_model(
     else:
         raise ValueError(f"Invalid load_bits: {load_bits}")
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, use_fast=False)
+    # Add trust_remote_code=True for Qwen2
+    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, use_fast=False, trust_remote_code=True)
     fix_tokenizer(tokenizer)
 
     cfg = AutoConfig.from_pretrained(model_lora_path)
@@ -49,8 +47,9 @@ def load_trained_lora_model(
         modalities = MODALITY_BUILDERS[cfg.modality_builder]()
 
     logging.info(f"Loading base model from {model_name_or_path} as {load_bits} bits")
+    # Add trust_remote_code=True for Qwen2
     model = model_cls.from_pretrained(
-        model_name_or_path, low_cpu_mem_usage=True, config=cfg, **load_kwargs
+        model_name_or_path, low_cpu_mem_usage=True, config=cfg, trust_remote_code=True, **load_kwargs
     )
     model.modalities = modalities
 
@@ -66,13 +65,15 @@ def load_trained_lora_model(
             repo_type="model",
         )
         non_lora_trainables = torch.load(local_fn, map_location="cpu")
+
     model.get_model().initialize_pretrained_modules(modalities, non_lora_trainables)
 
     logging.info(f"Loading and merging LoRA weights from {model_lora_path}")
     model = PeftModel.from_pretrained(model, model_lora_path)
+
     if load_bits == 16:
         # TODO: Figure out why this fails for other bit sizes
         model = model.merge_and_unload()
-    model.eval()
 
+    model.eval()
     return model, tokenizer
