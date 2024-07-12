@@ -10,6 +10,7 @@ from transformers import (
     PhiConfig,
     PhiModel,
     PhiForCausalLM,
+    PreTrainedModel,
 )
 
 from transformers.modeling_outputs import CausalLMOutputWithPast
@@ -28,7 +29,7 @@ class Phi3LMMModel(LMMMetaModel, PhiModel):
     def __init__(self, config: Phi3LMMConfig):
         super(Phi3LMMModel, self).__init__(config)
 
-class Phi3LMMForCausalLM(LMMMetaForCausalLM):
+class Phi3LMMForCausalLM(LMMMetaForCausalLM, PreTrainedModel):
     config_class = Phi3LMMConfig
 
     def __init__(self, config):
@@ -41,8 +42,20 @@ class Phi3LMMForCausalLM(LMMMetaForCausalLM):
         # Initialize weights and apply final processing
         self.post_init()
 
-    def get_model(self):
-        return self.model
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+        config = kwargs.pop("config", None)
+        if not isinstance(config, Phi3LMMConfig):
+            config = Phi3LMMConfig.from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
+        
+        # Load the model
+        model = super().from_pretrained(pretrained_model_name_or_path, *model_args, config=config, **kwargs)
+        
+        # Initialize the lm_head if it's not loaded from the pretrained model
+        if model.lm_head.weight.shape[0] != model.vocab_size:
+            model.lm_head = nn.Linear(model.config.hidden_size, model.vocab_size, bias=False)
+        
+        return model
 
     def forward(
         self,
